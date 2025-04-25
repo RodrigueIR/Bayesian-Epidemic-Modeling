@@ -16,7 +16,7 @@ The SIR model divides a population into three compartments:
   - $$\frac{dS}{dt} = -\beta S \frac{I}{N}, \quad \frac{dI}{dt} = \beta S \frac{I}{N} - \gamma I, \quad \frac{dR}{dt} = \gamma I$$
 * Bayesian inference estimates 𝛽 and 𝛾, incorporating prior knowledge:
   - $$\beta \sim \text{Beta}(2, 5), \quad \gamma \sim \text{Beta}(3, 7)$$
-![image](https://github.com/user-attachments/assets/217c3797-3d77-4903-873a-81c5c3f61f97)
+![image](https://github.com/user-attachments/assets/c5b1b198-49c1-4b76-9bee-e8e5c2434f21)
 ## Bayesian Approach
 - These numbers are initial guesses (our priors) for an epidemic model: 
   * Infection rate (β) = ~29%; About 29% of exposed people get infected per day. 
