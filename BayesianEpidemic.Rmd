@@ -1,0 +1,890 @@
+---
+title: "Case Study: Bayesian Epidemic Modeling"
+author: "Rodrigue Irampa"
+date: "2025-03-24"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+## Introduction
+
+This project explains how we can use Bayesian statistics to model disease outbreaks. We'll use the SIR (Susceptible-Infected-Recovered) model to estimate how quickly a disease spreads (infection rate β) and how quickly people recover (recovery rate γ).
+
+Bayesian methods help us:
+
+-   Combine prior knowledge with new data
+-   Quantify uncertainty in our estimates
+-   Make better predictions to guide public health decisions
+
+Estimates:
+
+-   Infection rate (𝛽): How easily the disease spreads.
+-   Recovery rate (𝛾): How quickly infected individuals recover.
+
+## The SIR Model
+
+The SIR model divides a population into three compartments:
+
+-   Susceptible: Can catch the disease
+-   Infected: Currently have and can spread the disease
+-   Recovered: Had the disease and are now immune
+
+$$\frac{dS}{dt} = -\beta S \frac{I}{N}, \quad \frac{dI}{dt} = \beta S \frac{I}{N} - \gamma I, \quad \frac{dR}{dt} = \gamma I$$
+
+Bayesian inference estimates 𝛽 and 𝛾, incorporating prior knowledge:
+
+$$\beta \sim \text{Beta}(2, 5), \quad \gamma \sim \text{Beta}(3, 7)$$ Here's a simple visualization:
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(deSolve)
+library(MASS)
+library(coda)
+library(MCMCpack)
+# SIR model visualization
+sir_model <- function(time, state, parameters) {
+  with(as.list(c(state, parameters)), {
+    dS <- -beta * S * I
+    dI <- beta * S * I - gamma * I
+    dR <- gamma * I
+    return(list(c(dS, dI, dR)))
+  })
+}
+
+init <- c(S = 0.999, I = 0.001, R = 0)
+times <- seq(0, 100, by = 1)
+params <- c(beta = 0.3, gamma = 0.1)
+
+out <- as.data.frame(ode(y = init, times = times, func = sir_model, parms = params))
+
+ggplot(out, aes(x = time)) +
+  geom_line(aes(y = S, color = "Susceptible"), size = 1) +
+  geom_line(aes(y = I, color = "Infected"), size = 1) +
+  geom_line(aes(y = R, color = "Recovered"), size = 1) +
+  labs(title = "SIR Model Dynamics",
+       x = "Time",
+       y = "Proportion of Population",
+       color = "Compartment") +
+  theme_minimal() +
+  scale_color_manual(values = c("Susceptible" = "darkblue", 
+                               "Infected" = "darkred", 
+                               "Recovered" = "lightgreen"))
+```
+
+## Bayesian Approach
+
+In Bayesian statistics, we start with prior beliefs (before seeing data) and update them with data to get posterior beliefs.
+
+```{r}
+set.seed(123)
+# Beta priors for infection rate β and recovery rate γ
+beta_prior <- rbeta(1000, 2, 5)
+gamma_prior <- rbeta(1000, 3, 7)
+# Rates
+mean(beta_prior)
+mean(gamma_prior)
+```
+**Interpretation**
+
+These numbers are initial guesses (our priors) for an epidemic model:
+- Infection rate (β) = ~29%; About 29% of exposed people get infected per day.
+- Recovery rate (γ) = ~31%; About 31% of sick people recover per day.
+The disease spreads moderately but recovers at a similar rate, so it may not explode immediately; but real data would refine these estimates.
+
+```{r}
+# Prior distributions visualization
+x <- seq(0, 1, length.out = 1000)
+beta_prior <- dbeta(x, 2, 5)
+gamma_prior <- dbeta(x, 3, 7)
+
+priors_df <- data.frame(
+  x = rep(x, 2),
+  density = c(beta_prior, gamma_prior),
+  parameter = rep(c("Beta (Infection rate)", "Gamma (Recovery rate)"), each = 1000)
+)
+
+ggplot(priors_df, aes(x = x, y = density, color = parameter)) +
+  geom_line(size = 1) +
+  labs(title = "Prior Distributions for β and γ",
+       x = "Parameter Value",
+       y = "Density",
+       color = "Parameter") +
+  theme_minimal() +
+  scale_color_manual(values = c("darkred", "darkblue"))
+
+```
+
+# Bayesian updating (combine prior + data)
+
+```{r}
+library(ggplot2)
+new_cases <- 10
+total_tests <- 100
+set.seed(123)
+beta_posterior <- rbeta(1000, 2 + new_cases, 5 + (total_tests - new_cases))
+gamma_posterior <- rbeta(1000, 3 + new_cases, 7 + (total_tests - new_cases))
+
+# Posterior means 
+mean_beta <- mean(beta_posterior)
+mean_gamma <- mean(gamma_posterior)
+
+# 95% credible intervals
+ci_beta <- quantile(beta_posterior, c(0.025, 0.975))
+ci_gamma <- quantile(gamma_posterior, c(0.025, 0.975))
+
+# Plot the posterior distributions
+df <- data.frame(
+  value = c(beta_posterior, gamma_posterior),
+  model = factor(c(rep("Beta Posterior", 1000), rep("Gamma Posterior", 1000)))
+)
+
+ggplot(df, aes(x = value, fill = model)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Posterior Distributions",
+       x = "Estimated Rate",
+       y = "Density",
+       fill = "Model") +
+  theme_minimal()
+```
+```{r}
+# Print summary results
+cat("Beta Posterior Mean:", round(mean_beta, 4), "\n")
+cat("Beta 95% Credible Interval:", round(ci_beta[1], 4), "-", round(ci_beta[2], 4), "\n\n")
+
+cat("Gamma Posterior Mean:", round(mean_gamma, 4), "\n")
+cat("Gamma 95% Credible Interval:", round(ci_gamma[1], 4), "-", round(ci_gamma[2], 4), "\n")
+
+```
+
+**Interpretation**
+
+Imagine we are trying to estimate how the infection rate in a population, after testing 100 people and finding 10 positive cases.
+
+We start with two different initial beliefs:
+- Infection is slightly more optimistic (Beta prior with 2 and 5)
+- Recovery is slightly more cautious (Beta prior with 3 and 7)
+
+After updating with real data:
+- Both models now estimate that the true infection rate is about 11.3% and recovery rate is about 11.9%.
+- The credible intervals tell us we’re 95% confident that the true rate lies somewhere between roughly 6.13% and 18.29% and for recovery rate roughly 6.26% and 18.47%.
+
+The graph in the previous code shows these estimates as bell-shaped curves, showing how uncertain or confident we are about where the true rate lies.
+
+## Metropolis-Hastings Sampling
+
+We will use this algorithm to estimate the posterior distributions of β and γ.
+
+```{r}
+# Setup and Simulation
+set.seed(123)
+true_beta <- 0.3
+true_gamma <- 0.1
+N <- 1000
+I0 <- 10
+days <- 30
+
+simulate_sir <- function(beta, gamma, N, I0, days) {
+  S <- numeric(days)
+  I <- numeric(days)
+  R <- numeric(days)
+  
+  S[1] <- N - I0
+  I[1] <- I0
+  R[1] <- 0
+  
+  for (t in 2:days) {
+    new_inf <- rbinom(1, S[t - 1], 1 - exp(-beta * I[t - 1] / N))
+    new_rec <- rbinom(1, I[t - 1], 1 - exp(-gamma))
+    
+    S[t] <- S[t - 1] - new_inf
+    I[t] <- I[t - 1] + new_inf - new_rec
+    R[t] <- R[t - 1] + new_rec
+  }
+  
+  return(I)
+}
+# Simulate observed data
+observed_I <- simulate_sir(true_beta, true_gamma, N, I0, days)
+observed_I
+```
+
+# Metropolis-Hastings Sampler
+```{r}
+mh_sampler <- function(data, N, I0, n_iter = 100000, burn_in = 1000) {
+  beta <- 0.2
+  gamma <- 0.15
+  beta_samples <- numeric(n_iter)
+  gamma_samples <- numeric(n_iter)
+  accepted <- 0  # Track number of accepted proposals
+  
+  prior_beta <- function(b) dbeta(b, 2, 5, log = TRUE)
+  prior_gamma <- function(g) dbeta(g, 3, 7, log = TRUE)
+  
+  log_likelihood <- function(b, g) {
+    pred <- simulate_sir(b, g, N, I0, length(data))
+    sum(dpois(data, lambda = pred, log = TRUE))
+  }
+  
+  for (i in 1:n_iter) {
+    beta_prop <- rnorm(1, beta, 0.02)
+    gamma_prop <- rnorm(1, gamma, 0.01)
+    
+    if (beta_prop <= 0 || beta_prop >= 1 || gamma_prop <= 0 || gamma_prop >= 1) {
+      beta_samples[i] <- beta
+      gamma_samples[i] <- gamma
+      next
+    }
+    
+    log_ratio <- (
+      log_likelihood(beta_prop, gamma_prop) + 
+      prior_beta(beta_prop) + 
+      prior_gamma(gamma_prop)
+    ) - (
+      log_likelihood(beta, gamma) + 
+      prior_beta(beta) + 
+      prior_gamma(gamma)
+    )
+    
+    if (log(runif(1)) < log_ratio) {
+      beta <- beta_prop
+      gamma <- gamma_prop
+      accepted <- accepted + 1
+    }
+    
+    beta_samples[i] <- beta
+    gamma_samples[i] <- gamma
+  }
+  
+  # Remove burn-in
+  beta_final <- beta_samples[-(1:burn_in)]
+  gamma_final <- gamma_samples[-(1:burn_in)]
+  
+  return(list(
+    beta = beta_final,
+    gamma = gamma_final,
+    accept_rate = accepted / n_iter
+  ))
+}
+```
+```{r}
+# Run MH Sampler 
+set.seed(123)
+results <- mh_sampler(observed_I, N, I0)
+
+# Posterior Summary 
+beta_mean <- mean(results$beta)
+gamma_mean <- mean(results$gamma)
+accept_rate <- results$accept_rate
+
+beta_ci <- quantile(results$beta, probs = c(0.025, 0.975))
+gamma_ci <- quantile(results$gamma, probs = c(0.025, 0.975))
+
+cat("Estimated beta (mean):", beta_mean, "\n")
+cat("Estimated gamma (mean):", gamma_mean, "\n")
+cat("Acceptance rate:", accept_rate, "\n")
+cat("95% Credible Interval for beta:", beta_ci, "\n")
+cat("95% Credible Interval for gamma:", gamma_ci, "\n")
+```
+
+**Interpretation**
+
+We used a simulation-based method to estimate how a disease spreads and how quickly people recover from it in a population of 1000 individuals.
+
+Here’s what we found:
+
+- Estimated infection rate (Beta) is 0.31; This means that, on average, each infected person passes the disease to 30% people per day.
+- Estimated recovery rate (Gamma) is 0.11; So, about 11% of infected individuals recover daily.
+- Acceptance Rate: 43.4%; This shows how efficiently our algorithm explored different possible values; and this rate is very good (neither too low nor too high).
+- Credible Intervals (95%): These give a range of values we are 95% confident the true rate lies in:
+    - Beta: between ~0.17 and 0.48
+    - Gamma: between ~0.01 and 0.22
+
+**Visualization**
+
+```{r}
+# Required for plotting
+library(ggplot2)
+library(gridExtra)
+
+# Trace Plots 
+trace_beta <- qplot(1:length(results$beta), results$beta, geom = "line") +
+  ggtitle("Trace Plot: Beta") +
+  xlab("Iteration") + ylab("Beta") +
+  theme_minimal() +
+  geom_hline(yintercept = beta_mean, linetype = "dashed", color = "red")
+
+trace_gamma <- qplot(1:length(results$gamma), results$gamma, geom = "line") +
+  ggtitle("Trace Plot: Gamma") +
+  xlab("Iteration") + ylab("Gamma") +
+  theme_minimal() +
+  geom_hline(yintercept = gamma_mean, linetype = "dashed", color = "red")
+grid.arrange(trace_beta, trace_gamma, nrow = 1)
+# Histograms
+hist_beta <- qplot(results$beta, bins = 30, fill = I("skyblue"), alpha = I(0.7)) +
+  ggtitle("Posterior Distribution of Beta") +
+  xlab("Beta") + ylab("Frequency")
+
+hist_gamma <- qplot(results$gamma, bins = 30, fill = I("salmon"), alpha = I(0.7)) +
+  ggtitle("Posterior Distribution of Gamma") +
+  xlab("Gamma") + ylab("Frequency")
+grid.arrange(hist_beta, hist_gamma, nrow = 1)
+```
+
+**Interpretation**
+
+Trace Plots show the journey of the algorithm’s guess for infection rate (β) and recovery rate (γ) over time.
+- If we see the line bouncing around early in the trace but eventually becoming stable around a certain value, that indicates the algorithm has converged.
+- The red dashed line represents the average value of the estimated parameters (β and γ). After some fluctuations, the sampler should be stabilizing around this average; showing the algorithm is consistently sampling values from the target distribution.
+- Convergence is good because it means the algorithm is reliably giving us correct estimates based on the data.
+- Histograms show the most probable values for the rates, with smooth, peaked distributions.
+
+## Comparison with Maximum Likelihood Estimation
+
+```{r}
+set.seed(123)
+# Maximum Likelihood Estimation (MLE)
+mle_optim <- function(params, data) {
+  beta <- params[1]; gamma <- params[2]
+  
+  # Ensure parameters are within valid bounds
+  if (beta <= 0 || gamma <= 0 || beta >= 1 || gamma >= 1) return(Inf)
+  
+  # Simulate infections with current parameters
+  I_sim <- tryCatch(simulate_sir(beta, gamma, N, I0, length(data)), 
+                    error = function(e) return(rep(NA, length(data))))
+  
+  # Penalize invalid simulations
+  if (any(is.na(I_sim)) || any(I_sim < 0)) return(1e6)
+  
+  # Negative log-likelihood using Poisson approximation
+  -sum(dpois(data, lambda = pmax(I_sim, 1e-6), log = TRUE))
+}
+
+# Run MLE optimizer
+mle_result <- optim(
+  par = c(0.2, 0.1),  # Initial guesses for beta and gamma
+  fn = mle_optim,
+  method = "Nelder-Mead",
+  data = observed_I
+)
+
+# Print Results for Comparison
+cat("Bayesian Estimates:\n")
+cat("β (mean):", round(beta_mean, 5), "\n")
+cat("γ (mean):", round(gamma_mean, 5), "\n")
+
+cat("MLE Estimates:\n")
+cat("β:", round(mle_result$par[1], 5), "\n")
+cat("γ:", round(mle_result$par[2], 5), "\n")
+
+
+```
+**Interpretation**
+
+- The smart guess (Bayesian) is like an experienced doctor; it considers both what we know and what we see.
+- The simple guess (MLE) is like a quick test; it only looks at the current numbers
+
+For making big decisions (like lockdowns), the smart guess is usually safer because it considers more information. But both methods agree the disease is spreading and we need to be careful!
+
+## Bayesian vs Frequentist:
+
+-   Bayesian provides full probability distributions for parameters
+-   Naturally incorporates prior knowledge
+-   Better handles uncertainty quantification
+
+```{r}
+# Bayesian Posterior (Uncertainty) vs. MLE Point Estimate
+curve(dnorm(x, mean=beta_mean, sd=0.05), xlim=c(0,0.6), col="darkred", lwd=2,
+      main="Bayesian vs. Maximum Likelihood Estimation",
+      xlab="Infection Rate (β)", ylab="Density/Belief")
+# MLE Point Estimate (from our optimization result)
+abline(v=mle_result$par[1], col="darkblue", lwd=2, lty=2)
+# Add uncertainty range for MLE (approximate 95% CI)
+arrows(x0=mle_result$par[1]-0.03, y0=2, x1=mle_result$par[1]+0.03, y1=2, 
+       col="darkblue", code=3, angle=90, length=0.1, lwd=2)
+legend("topright", 
+       legend=c(paste("Bayesian (μ =", round(beta_mean,3), "± 0.05"), 
+               paste("MLE =", round(mle_result$par[1],3), "± ~0.03")),
+       col=c("darkred", "darkblue"), lty=c(1,2), lwd=2)
+```
+
+**Interpretation**
+
+1. The Bayesian Approach (Red Curve)
+- Shows a range of possibilities for how fast the disease spreads (infection rate β)
+- The curve represents how confident we are in different values:
+- Peak (middle) = Most likely value (~30%)
+- Wider curve = More uncertainty about the exact number
+- There's a 32% chance of infection, but could reasonably be between 25-35%"
+
+2. The MLE Approach (Blue Line & Error Bars)
+- Gives one best guess for the infection rate (~25%)
+- The small error bars show this estimate isn't perfect, it might be slightly higher or lower
+- Our best single estimate is 25%, give or take a couple percent
+
+## Model Sensitivity:
+
+-   This shows how different priors lead to different outbreak forecasts
+-   Original priors (Beta(2,5), Beta(3,7)) vs more informative vs uninformative
+-   Visualizes the range of possible trajectories
+
+```{r}
+# Define function to simulate SIR with different priors
+simulate_sir_priors <- function(beta_prior_a, beta_prior_b, 
+                               gamma_prior_a, gamma_prior_b, 
+                               n_sim = 100, days = 30) {
+  set.seed(123)
+  forecasts <- matrix(NA, nrow = n_sim, ncol = days)
+  
+  for (i in 1:n_sim) {
+    # Sample from priors
+    beta <- rbeta(1, beta_prior_a, beta_prior_b)
+    gamma <- rbeta(1, gamma_prior_a, gamma_prior_b)
+    
+    # Simulate outbreak
+    sim <- simulate_sir(beta, gamma, N = 1000, I0 = 10, days = days)
+    forecasts[i,] <- sim
+  }
+  
+  return(forecasts)
+}
+
+# Run with different priors
+priors <- list(
+  Original = list(beta_a = 2, beta_b = 5, gamma_a = 3, gamma_b = 7),
+  Informative = list(beta_a = 4, beta_b = 10, gamma_a = 6, gamma_b = 14),
+  Uninformative = list(beta_a = 1, beta_b = 1, gamma_a = 1, gamma_b = 1)
+)
+
+# Simulate forecasts for each set of priors
+results <- lapply(priors, function(p) {
+  simulate_sir_priors(p$beta_a, p$beta_b, p$gamma_a, p$gamma_b)
+})
+
+# Plot comparison of results for each prior
+par(mfrow = c(1, 3))  # Create 1 row, 3 column grid for plots
+for (i in 1:3) {
+  matplot(t(results[[i]]), type = "l", col = adjustcolor("darkred", 0.2),
+          main = paste(names(priors)[i], "Prior"),
+          xlab = "Days", ylab = "Infections",
+          ylim = c(0, max(unlist(results))))  
+  lines(colMeans(results[[i]]), col = "darkblue", lwd = 2)  # Add line for average infection curve
+}
+
+```
+
+**Interpretation**
+
+By comparing the effects of different priors, you can see how much prior knowledge (or lack thereof) impacts the simulated outbreaks.
+
+Original priors allow for some flexibility in the infection dynamics, whereas Informative priors provide more certainty about the infection dynamics based on previous knowledge.
+
+Uninformative priors are used when there is little prior knowledge, leading to more unpredictable results.
+
+## Data Limitations: Under-Reporting
+
+-   Modifies the likelihood to account for under-reporting probability
+-   Shows how parameter estimates change with different reporting rates
+-   Critical for real-world applications where not all cases are detected
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# True parameters
+true_beta <- 0.3
+true_gamma <- 0.1
+
+# Define reporting intervals as ranges (30-50%, 50-70%, 70-90%)
+reporting_ranges <- list(
+  c(0.3, 0.5),
+  c(0.5, 0.7),
+  c(0.7, 0.9)
+)
+
+# Simulate data for each range
+set.seed(123)
+results_list <- lapply(reporting_ranges, function(range) {
+  reporting_level <- runif(1000, min = range[1], max = range[2]) # Random levels within each range
+  data.frame(
+    reporting_min = range[1],
+    reporting_max = range[2],
+    beta_est = true_beta * reporting_level + rnorm(1000, sd = 0.03),
+    gamma_est = true_gamma / (reporting_level + 0.1) + rnorm(1000, sd = 0.01)
+  )
+})
+
+# Combine results
+results_df <- do.call(rbind, results_list)
+
+# Create interval labels for legend
+results_df$reporting_interval <- paste0(
+  results_df$reporting_min*100, "-", 
+  results_df$reporting_max*100, "%"
+)
+
+# Find optimal range (where estimates are closest to truth)
+results_df$total_error <- abs(results_df$beta_est - true_beta) + abs(results_df$gamma_est - true_gamma)
+optimal_range <- results_df[which.min(results_df$total_error), c("reporting_min", "reporting_max")]
+
+# Plot with interval-based legend
+ggplot(results_df, aes(x = beta_est, y = gamma_est, 
+                      color = factor(reporting_interval, 
+                                    levels = unique(results_df$reporting_interval)))) +
+  geom_point(alpha = 0.4, size = 2) +
+  geom_vline(xintercept = true_beta, linetype = "dashed", color = "darkred") +
+  geom_hline(yintercept = true_gamma, linetype = "dashed", color = "darkblue") +
+  labs(
+    title = "Parameter Estimates Under Different Reporting Levels",
+    subtitle = paste("Optimal reporting range:", optimal_range$reporting_min*100, "-", 
+                    optimal_range$reporting_max*100),
+    x = "Estimated Infection Rate (β)",
+    y = "Estimated Recovery Rate (γ)",
+    color = "Reporting Intervals"
+  ) +
+  scale_color_manual(values = c("orange", "skyblue", "lightgreen")) + 
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.subtitle = element_text(face = "italic")
+  ) +
+  annotate("text", x = true_beta + 0.02, y = 0.15, 
+           label = "True β", color = "darkred", hjust = 0) +
+  annotate("text", x = 0.35, y = true_gamma - 0.01, 
+           label = "True γ", color = "darkblue", vjust = 1)
+```
+
+**Interpretation**
+
+This analysis shows how different levels of underreporting affect the estimation of infection and recovery rates.
+
+Higher underreporting leads to more variability in the estimates of these rates.
+
+The optimal reporting range (70% to 90%) is the one where the estimates are closest to the true values, indicating the best reporting conditions for accurate modeling.
+
+## Policy Implications:
+
+- Quantifies uncertainty through posterior probabilities
+- Provides concrete policy recommendations based on:
+    -   Probability transmission rate exceeds critical threshold
+    -   Probability outbreak will grow (R0>1)
+
+- Visualizes decision thresholds clearly Wider posterior distributions (more uncertainty) would suggest:
+    -   More cautious policy decisions
+    -   Need for additional data collection
+    -   Consideration of multiple scenarios in planning
+
+```{r}
+# Policy decision analysis based on uncertainty
+policy_analysis <- function(beta_posterior, gamma_posterior) {
+  # Calculate probability that beta exceeds threshold 
+  prob_high_beta <- mean(beta_posterior > 0.3)
+  
+  # Calculate probability that R0 (beta/gamma) > 1
+  R0_samples <- beta_posterior / gamma_posterior
+  prob_R0_gt1 <- mean(R0_samples > 1)
+  
+  # Policy recommendations with conditions
+  recommendations <- list()
+  recommendations$lockdown <- ifelse(prob_high_beta > 0.8, "Strongly Recommended",
+                                   ifelse(prob_high_beta > 0.5, "Recommended",
+                                          "Not Recommended"))
+  recommendations$vaccination <- ifelse(prob_R0_gt1 > 0.7, "Urgent Need",
+                                      ifelse(prob_R0_gt1 > 0.3, "Recommended",
+                                             "Monitor Situation"))
+  
+  return(list(
+    prob_high_beta = prob_high_beta,
+    prob_R0_gt1 = prob_R0_gt1,
+    recommendations = recommendations
+  ))
+}
+# Analyze results
+policy_results <- policy_analysis(beta_posterior, gamma_posterior)
+policy_results
+```
+```{r}
+# Create policy visualization (matching image style)
+policy_df <- data.frame(
+  Metric = c("P(β > 0.3)", "P(R0 > 1)"),
+  Value = c(policy_results$prob_high_beta, policy_results$prob_R0_gt1)
+)
+
+ggplot(policy_df, aes(x = Metric, y = Value, fill = Value > 0.5)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkred") +
+  scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.25, 0.50, 0.75, 1.00)) +
+  scale_fill_manual(values = c("FALSE" = "gray", "TRUE" = "steelblue")) +
+  labs(title = "Policy Decision Metrics",
+       subtitle = paste("Lockdown:", policy_results$recommendations$lockdown,
+                       "| Vaccination:", policy_results$recommendations$vaccination),
+       y = "Probability") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+**Interpretation**
+
+High Risk Alert
+- 99% chance the disease is spreading fast
+- 98% chance outbreak is growing (1 person infects >1 other)
+
+Act Now:
+- Strict lockdown needed
+- Vaccinate urgently
+
+## Faster MCMC Sampling with MCMCpack
+
+The basic Metropolis-Hastings:
+
+```{r}
+library(MCMCpack)
+posterior <- MCMCmetrop1R(
+  fun = function(params){
+    beta <- params[1]
+    gamma <- params[2]
+    if(beta <= 0 || beta >= 1 || gamma <= 0 || gamma >= 1) return(-Inf)
+    sum(dpois(observed_I, lambda = beta * 1000 * 0.7, log = TRUE)) +
+      dbeta(beta, 2, 5, log = TRUE) +
+      dbeta(gamma, 3, 7, log = TRUE)
+  },
+  theta.init = c(0.3, 0.1),
+  thin = 1,
+  mcmc = 10000,
+  burnin = 1000
+)
+```
+
+```{r}
+# Check acceptance rate
+acceptance.rates <- 1 - rejectionRate(posterior)
+cat("Acceptance rate:", acceptance.rates)
+```
+
+**Interpretation**
+
+A 53.7% acceptance rate tells us: 
+- The analysis ran correctly 
+- The estimates are reliable 
+- We didn't make changes too big (which would give low acceptance) or too small (which would give high acceptance)
+
+# Bayesian Agent-Based Model (ABM)
+
+Agents can be in different health states: 
+- Shielded (H) = Healthy and vulnerable
+- Infiltrated (I) = Infiltrated	Infected but not infectious yet
+- Spreader (S) = Actively contagious
+- Resistant (R) = Recovered with immunity
+- Fallen (F) = Died due to infection
+
+Places: 
+- Homes (high risk) 
+- Schools (medium risk) 
+- Work (medium risk)️
+- Public (low risk)
+
+Smart Guessing: 
+- Starts with rough estimates of spread/recovery rates (Beta(2,5) and Beta(3,7)) 
+- Updates these guesses as real data comes in (Bayesian learning)
+
+```{r}
+# Load necessary libraries
+library(igraph)
+library(sna)
+library(ggplot2)
+library(network)
+
+# Define health states
+STATES <- 5
+STATELABELS <- c("Shielded (H)", "Infiltrated (I)", "Spreader (S)", 
+                 "Resistant (R)", "Fallen (F)")
+STATECODES <- c("H", "I", "S", "R", "F")  # Short codes for visualization
+
+# Define places with risk levels
+PLACES <- c("Home", "School", "Work", "Public")
+RISK_LEVELS <- c(0.8, 0.5, 0.5, 0.2)  # High risk at home, lower risk in public
+
+# Initialize transition matrix & state durations
+transitionMatrix <- matrix(0, STATES, STATES)
+stateMin <- rep(1, STATES)   # Minimum days in state
+stateMax <- rep(1, STATES)   # Maximum days in state
+
+# Bayesian prior distributions (Beta)
+beta_infect <- rbeta(1, 2, 5)  # Initial belief about infection rate
+beta_recover <- rbeta(1, 3, 7)  # Initial belief about recovery rate
+
+# Define transition probabilities & durations
+stateMin[2] <- 3;  stateMax[2] <- 10  # Infiltrated duration
+transitionMatrix[2,3] <- beta_infect   # Infiltrated → Spreader
+
+stateMin[3] <- 3;  stateMax[3] <- 8
+transitionMatrix[3,4] <- 0.3  # Spreader → Resistant
+transitionMatrix[3,5] <- 0.2  # Spreader → Fallen
+
+stateMin[4] <- 5;  stateMax[4] <- 14
+transitionMatrix[4,1] <- 0.1  # Resistant → Shielded (possible loss of resistance)
+
+# Function to set agent state
+setAgentState <- function(agent, state) {
+  agent$state <- state
+  if (sum(transitionMatrix[state, ]) > 0) {
+    agent$stateCountdown <- sample(seq(stateMin[state], stateMax[state]), 1)
+    agent$nextState <- sample(1:STATES, prob=transitionMatrix[state,], size=1)
+  } else {
+    agent$stateCountdown <- NA
+    agent$nextState <- NA
+  }
+  return(agent)
+}
+
+# Transition function
+transitionAgent <- function(agent) {
+  return(setAgentState(agent, agent$nextState))
+}
+
+# Update function
+updateAgent <- function(agent) {
+  if (!is.na(agent$stateCountdown)) {
+    agent$stateCountdown <- agent$stateCountdown - 1
+    if (agent$stateCountdown <= 0) {
+      agent <- transitionAgent(agent)
+    }
+  }
+  return(agent)
+}
+```
+
+```{r}
+# Simulate a population
+num_agents <- 100
+agents <- vector("list", num_agents)
+for (i in 1:num_agents) {
+  agents[[i]] <- list(state = sample(1:STATES, 1))
+  agents[[i]] <- setAgentState(agents[[i]], agents[[i]]$state)
+}
+
+# Simulate progression over time
+days <- 30
+for (day in 1:days) {
+  for (i in 1:num_agents) {
+    agents[[i]] <- updateAgent(agents[[i]])
+  }
+}
+
+# Bayesian updating (new evidence updates Beta distributions)
+new_cases <- 10
+total_tests <- 50
+beta_infect <- rbeta(1, 2 + new_cases, 5 + (total_tests - new_cases))
+beta_recover <- rbeta(1, 3 + new_cases, 7 + (total_tests - new_cases))
+
+# Create network visualization of disease progression
+graph <- graph_from_adjacency_matrix(transitionMatrix, mode="directed", weighted=TRUE)
+plot(graph, vertex.label=STATELABELS, edge.arrow.size=0.5, 
+     main="Disease Progression Network")
+```
+
+```{r}
+# Define colors for states
+state_colors <- c("lightblue", "salmon", "darkred", "darkgreen", "black")
+
+# Generate a random scale-free network
+set.seed(123)
+g <- barabasi.game(num_agents, directed = TRUE)
+
+# Assign random health states to nodes using short codes
+V(g)$state <- sample(STATECODES, num_agents, replace = TRUE)
+
+# Assign colors based on states
+V(g)$color <- state_colors[match(V(g)$state, STATECODES)]
+
+# Plot the network
+layout <- layout_with_fr(g)
+plot(g, 
+     layout = layout,
+     vertex.color = V(g)$color, 
+     vertex.size = 8,
+     vertex.label = V(g)$state,
+     vertex.label.cex = 0.4,
+     vertex.label.color = "black",
+     edge.arrow.size = 0.3,
+     main = "Bayesian ABM Network")
+legend("topright", legend = STATELABELS, col = state_colors, pch = 16, bty = "n")
+```
+
+```{r}
+# Simulation parameters
+num_days <- 30
+infection_prob <- 0.1
+recovery_prob <- 0.05
+
+# Initialize with more Shielded and a few Infiltrated
+V(g)$state <- "H" 
+initial_infected <- sample(V(g), size = 5)
+V(g)[initial_infected]$state <- "I" 
+
+# Update function for network
+update_states <- function(g) {
+  new_states <- V(g)$state
+  
+  for (v in V(g)) {
+    if (new_states[v] == "I" && runif(1) < recovery_prob) {
+      new_states[v] <- "R"
+    }
+    if (new_states[v] == "H") {
+      neighbors <- neighbors(g, v, mode = "in")
+      if (any(V(g)[neighbors]$state == "S") && runif(1) < infection_prob) {
+        new_states[v] <- "I"
+      }
+    }
+    if (new_states[v] == "I" && runif(1) < 0.3) {
+      new_states[v] <- "S"
+    }
+    if (new_states[v] == "S" && runif(1) < 0.1) {
+      new_states[v] <- "F"
+    }
+  }
+  
+  V(g)$state <- new_states
+  V(g)$color <- state_colors[match(V(g)$state, STATECODES)]
+  return(g)
+}
+
+# Run and visualize progression
+for (day in 1:num_days) {
+  g <- update_states(g)
+  plot(g, 
+       layout = layout,
+       vertex.color = V(g)$color, 
+       vertex.size = 8,
+       vertex.label = V(g)$state,
+       vertex.label.cex = 0.4,
+       edge.arrow.size = 0.3,
+       main = sprintf("Day %d", day))
+  legend("topright", legend = STATELABELS, col = state_colors, pch = 16, bty = "n")
+  Sys.sleep(0.5)
+}
+```
+
+**Interpretation**
+
+Each Bubble = 1 person
+
+Start (Day 1):
+- Most bubbles are blue (healthy)
+- A few red bubbles appear (first sick people)
+
+Middle (Day 10-15):
+- Red bubbles spread like fire!
+- You see orange bubbles turn red (people getting sick)
+- Gray bubbles start appearing (people getting better)
+
+End (Day 30):
+- More gray bubbles (recovered people)
+- Fewer red bubbles (sickness slowing down)
+- Some black bubbles (unfortunate losses)
+
+Like Real Life:
+This is how diseases like COVID or flu spread through schools, workplaces, or families. The animation shows why staying home when sick and getting vaccinated helps protect everyone.

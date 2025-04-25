@@ -1,0 +1,190 @@
+---
+title: "differs"
+author: "Rodrigue Irampa"
+date: "2025-04-07"
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(gganimate)
+library(dplyr)
+library(igraph)
+library(gifski)
+
+# Define health states and colors for 5-state model
+STATELABELS <- c("H" = "Shielded", "I" = "Infiltrated", "S" = "Spreader",
+                 "R" = "Resistant", "F" = "Fallen")
+state_colors <- c("H" = "lightblue", "I" = "salmon", "S" = "darkred", 
+"R" = "darkgreen", "F" = "black")
+
+# Simulation parameters
+num_agents <- 200
+num_days <- 30
+infection_prob <- 0.1
+progression_prob <- 0.3
+fatality_prob <- 0.1
+recovery_prob <- 0.05
+resistance_loss_prob <- 0.02
+
+# Create scale-free network
+set.seed(123)
+g <- sample_pa(num_agents, directed = FALSE)
+layout <- layout_nicely(g)
+
+# Initialize agents with network positions
+agents <- data.frame(
+  id = 1:num_agents,
+  x = layout[,1],
+  y = layout[,2],
+  state = "H",
+  day = 0,
+  stringsAsFactors = FALSE
+)
+
+# Initialize with some Infiltrated agents
+initial_infected <- sample(num_agents, 5)
+agents$state[initial_infected] <- "I"
+
+# Store edge list for connections
+edges <- as_edgelist(g) %>% 
+  as.data.frame() %>% 
+  dplyr::rename(from = V1, to = V2)
+
+# Simulation data storage
+all_states <- list(agents)
+
+# Simulation loop
+for (day in 1:num_days) {
+  current_agents <- all_states[[day]]
+  new_agents <- current_agents
+  
+  # State transitions
+  for (i in 1:num_agents) {
+    current_state <- new_agents$state[i]
+    
+    if (current_state == "H") {
+      neighbors <- edges$to[edges$from == i]
+      if (any(new_agents$state[neighbors] == "S") && runif(1) < infection_prob) {
+        new_agents$state[i] <- "I"
+      }
+    }
+    
+    if (current_state == "I" && runif(1) < progression_prob) {
+      new_agents$state[i] <- "S"
+    }
+    
+    if (current_state == "S") {
+      if (runif(1) < recovery_prob) {
+        new_agents$state[i] <- "R"
+      } else if (runif(1) < fatality_prob) {
+        new_agents$state[i] <- "F"
+      }
+    }
+    
+    if (current_state == "R" && runif(1) < resistance_loss_prob) {
+      new_agents$state[i] <- "H"
+    }
+  }
+  
+  new_agents$day <- day
+  all_states[[day + 1]] <- new_agents
+}
+
+# Prepare data for visualization
+simulation_data <- dplyr::bind_rows(all_states) %>% 
+  dplyr::mutate(
+    state = factor(state, levels = names(STATELABELS)),
+    day = as.integer(day)
+  )
+
+# Create connection lines (static for animation)
+connection_lines <- edges %>%
+  dplyr::left_join(simulation_data %>% dplyr::select(id, x, y, day), by = c("from" = "id")) %>%
+  dplyr::rename(x_start = x, y_start = y) %>%
+  dplyr::left_join(simulation_data %>% dplyr::select(id, x, y, day), by = c("to" = "id", "day" = "day")) %>%
+  dplyr::rename(x_end = x, y_end = y) %>%
+  dplyr::filter(!is.na(x_start) & !is.na(x_end))
+
+# Animated bubble chart with connections
+bubble_chart <- ggplot() +
+  geom_segment(data = connection_lines,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+               color = "gray80", alpha = 0.5, size = 0.3) +
+  geom_point(data = simulation_data,
+             aes(x = x, y = y, color = state, fill = state, size = state),
+             alpha = 0.9, shape = 21) +
+  scale_color_manual(
+    name = "Health State",
+    values = state_colors,
+    labels = STATELABELS,
+    guide = guide_legend(override.aes = list(size = 5))
+  ) +
+  scale_fill_manual(values = state_colors, guide = "none") +
+  scale_size_manual(values = c("H" = 3, "I" = 4, "S" = 5, "R" = 4, "F" = 3), guide = "none") +
+  labs(
+    title = "Disease Spread: Day {frame_time}",
+    subtitle = "H:Shielded | I:Infiltrated | S:Spreader | R:Resistant | F:Fallen",
+    x = "",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 11, face = "bold"),
+    axis.text = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10)
+  ) +
+  transition_time(day) +
+  ease_aes('linear') +
+  enter_fade() +
+  exit_fade()
+
+# Render animation
+animate(bubble_chart, 
+        nframes = num_days * 2,
+        fps = 5,
+        width = 800, 
+        height = 600,
+        renderer = gifski_renderer(),
+        duration = num_days)
+
+# Save the animation
+anim_save("disease_spread.gif")
+
+# Static version for specific day
+day_to_plot <- 15
+ggplot() +
+  geom_segment(data = connection_lines %>% filter(day == day_to_plot),
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end),
+               color = "gray80", alpha = 0.5, size = 0.3) +
+  geom_point(data = simulation_data %>% filter(day == day_to_plot),
+             aes(x = x, y = y, color = state, fill = state, size = state),
+             alpha = 0.9, shape = 21) +
+  scale_color_manual(
+    name = "Health State",
+    values = state_colors,
+    labels = STATELABELS,
+    guide = guide_legend(override.aes = list(size = 4))
+  ) +
+  scale_fill_manual(values = state_colors, guide = "none") +
+  scale_size_manual(values = c("H" = 3, "I" = 4, "S" = 5, "R" = 4, "F" = 3), guide = "none") +
+  labs(title = paste("Disease Spread - Day", day_to_plot),
+       subtitle = "H:Shielded | I:Infiltrated | S:Spreader | R:Resistant | F:Fallen",
+       x = "", y = "") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.text = element_blank(),
+    panel.grid = element_blank(),
+    plot.subtitle = element_text(size = 9)
+  )
+```
+
+
+
+
+
